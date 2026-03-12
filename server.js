@@ -872,12 +872,9 @@ app.use(express.static('.'));
 
 async function start() {
   await initDB();
-  // ដំណើរការ app.listen តែពេល Test លើម៉ាស៊ីនខ្លួនឯងប៉ុណ្ណោះ
-  if (process.env.NODE_ENV !== 'production') {
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-    });
-  }
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+  });
 }
 start();
 

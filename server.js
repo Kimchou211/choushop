@@ -232,6 +232,43 @@ async function tgSend(text) {
   } catch(e) { console.error('❌ Telegram error:', e.message); return false; }
 }
 
+async function tgSendWithConfirm(o) {
+  try {
+    const bar = '━━━━━━━━━━━━━━━━━━━━━━';
+    const items = (o.items||[]).map(i =>
+      `  • ${i.icon||''} <b>${i.name}</b>  ×${i.qty||1}  →  <b>$${((+i.price)*(i.qty||1)).toFixed(2)}</b>`
+    ).join('\n') || '  (គ្មានទំនិញ)';
+    const text = `🛍 <b>ការបញ្ជាទិញថ្មី — NyKa Shop</b>
+${bar}
+📋 <b>Bill:</b> <code>${o.bill}</code>
+👤 <b>អតិថិជន:</b> ${o.name||'Guest'}
+📧 <b>Email:</b> ${o.email||'—'}
+${bar}
+🛒 <b>ទំនិញ:</b>
+${items}
+${bar}
+💰 <b>សរុប: $${(+o.total).toFixed(2)}</b>
+💳 <b>Bakong KHQR — រង់ចាំបង់ប្រាក់</b>
+🕐 ${new Date().toLocaleString('km-KH')}
+${bar}
+⬇️ <b>ចុច Confirm ពេល Customer បង់ហើយ</b>`;
+    const r = await fetch(`https://api.telegram.org/bot${TG.token}/sendMessage`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: TG.chat_id, text, parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: [[
+          { text: '✅ Confirm Payment', callback_data: `confirm:${o.bill}` },
+          { text: '❌ Cancel Order',    callback_data: `cancel:${o.bill}`  }
+        ]]}
+      })
+    });
+    const d = await r.json();
+    if (d.ok) console.log('📨 Telegram sent with confirm button');
+    else console.error('❌ Telegram:', d.description);
+    return d.ok;
+  } catch(e) { console.error('❌ Telegram error:', e.message); return false; }
+}
+
 function tgMsg(o) {
   const bar   = '━━━━━━━━━━━━━━━━━━━━━━';
   const items = (o.items||[]).map(i =>
@@ -431,7 +468,7 @@ app.post('/api/products', adminAuth, async (req, res) => {
     const [r] = await db.execute(
       `INSERT INTO products (name,brand,description,price,old_price,icon,category,badge,specs,images,rating,reviews,stock,active)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)`,
-      [name, brand, description||'', +price, old_price||null, icon||'🌸', category, badge||'',
+      [name, brand, description||'', +price, (old_price && +old_price > 0) ? +old_price : null, icon||'🌸', category, badge||'',
        JSON.stringify(specs), JSON.stringify(images), +rating||4.5, +reviews||0, +stock||100]
     );
     console.log(`✅ Product created: ${name} (id=${r.insertId})`);
@@ -451,7 +488,7 @@ app.put('/api/products/:id', adminAuth, async (req, res) => {
     if (!name || !price) return res.status(400).json({ success: false, message: 'name & price required' });
     await db.execute(
       `UPDATE products SET name=?,brand=?,description=?,price=?,old_price=?,icon=?,category=?,badge=?,specs=?,images=?,rating=?,stock=?,updated_at=NOW() WHERE id=?`,
-      [name, brand, description||'', +price, old_price||null, icon||'🌸', category, badge||'',
+      [name, brand, description||'', +price, (old_price && +old_price > 0) ? +old_price : null, icon||'🌸', category, badge||'',
        JSON.stringify(specs), JSON.stringify(images), +rating||4.5, +stock||100, req.params.id]
     );
     console.log(`✅ Product updated: id=${req.params.id}`);
@@ -593,6 +630,8 @@ app.post('/api/bakong/checkout', async (req, res) => {
     };
 
     console.log(`💳 Checkout: ${bill} | ${currency} ${amount}`);
+    // Send Telegram notify with confirm button immediately on checkout
+    tgSendWithConfirm({ bill, name:userName, email:userEmail, total:+amount, items:store[bill].items }).catch(()=>{});
     res.json({
       success:true, qrImage:qrImg, khqrString:khqr, billNumber:bill,
       amount:+amount, currency, account:BAKONG.account, merchantName:BAKONG.merchant
@@ -872,11 +911,89 @@ app.use(express.static('.'));
 
 async function start() {
   await initDB();
-  app.listen(PORT, () => {
+  app.listen(PORT, async () => {
     console.log(`🚀 Server running on port ${PORT}`);
+    const domain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.VERCEL_URL;
+    if (domain) {
+      try {
+        const webhookUrl = `https://${domain}/api/telegram/webhook`;
+        const r = await fetch(`https://api.telegram.org/bot${TG.token}/setWebhook`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: webhookUrl })
+        });
+        const d = await r.json();
+        if (d.ok) console.log(`📡 Telegram webhook: ${webhookUrl}`);
+        else console.error("❌ Webhook failed:", d.description);
+      } catch(e) { console.error("❌ Webhook error:", e.message); }
+    }
   });
 }
 start();
+
+// ─── TELEGRAM WEBHOOK (Admin confirm button) ─────────────────
+app.post('/api/telegram/webhook', async (req, res) => {
+  res.json({ ok: true }); // answer Telegram immediately
+  try {
+    const { callback_query } = req.body;
+    if (!callback_query) return;
+    const { data, message, id: callbackId } = callback_query;
+    const [action, bill] = data.split(':');
+
+    // Answer callback to remove loading spinner
+    await fetch(`https://api.telegram.org/bot${TG.token}/answerCallbackQuery`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ callback_query_id: callbackId })
+    });
+
+    if (action === 'confirm') {
+      const inf = await storeGet(bill);
+      if (!inf || inf.status === 'paid') {
+        await fetch(`https://api.telegram.org/bot${TG.token}/sendMessage`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: TG.chat_id, text: `⚠️ Bill <code>${bill}</code> បានបង់ហើយ ឬ រកមិនឃើញ!`, parse_mode: 'HTML' })
+        });
+        return;
+      }
+      // Mark as paid
+      store[bill] = { ...inf, status: 'paid', paidAt: new Date().toISOString() };
+      if (db && inf.dbId) {
+        try { await db.execute("UPDATE orders SET status='paid',paid_at=NOW() WHERE id=?", [inf.dbId]); } catch{}
+        try {
+          await db.execute(
+            "INSERT INTO payment_logs (bill_number,order_id,action,bakong_message) VALUES (?,?,'telegram_confirm','Admin confirmed via Telegram')",
+            [bill, inf.dbId]
+          );
+        } catch{}
+      }
+      // Edit original message to show confirmed
+      await fetch(`https://api.telegram.org/bot${TG.token}/editMessageText`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: TG.chat_id,
+          message_id: message.message_id,
+          text: `✅ <b>បង់ប្រាក់បានបញ្ជាក់ — NyKa Shop</b>\n📋 Bill: <code>${bill}</code>\n💰 $${inf.amount}\n✅ Admin confirmed`,
+          parse_mode: 'HTML'
+        })
+      });
+      console.log(`✅ Telegram confirmed: ${bill}`);
+
+    } else if (action === 'cancel') {
+      if (db) {
+        try { await db.execute("UPDATE orders SET status='cancelled' WHERE bill_number=?", [bill]); } catch{}
+      }
+      if (store[bill]) store[bill].status = 'cancelled';
+      await fetch(`https://api.telegram.org/bot${TG.token}/editMessageText`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: TG.chat_id,
+          message_id: message.message_id,
+          text: `❌ <b>Order Cancelled</b>\n📋 Bill: <code>${bill}</code>`,
+          parse_mode: 'HTML'
+        })
+      });
+    }
+  } catch(e) { console.error('TG webhook error:', e.message); }
+});
 
 // Export app សម្រាប់អោយ Vercel ប្រើប្រាស់ជា Serverless Function
 module.exports = app;

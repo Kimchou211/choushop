@@ -1,0 +1,25 @@
+# ════════════════════════════════════════
+#  NyKa Shop — Environment Variables
+#  XAMPP Configuration
+# ════════════════════════════════════════
+
+# ── DATABASE (XAMPP) ─────────────────────
+DB_HOST=localhost
+DB_USER=root
+DB_PASS=
+DB_NAME=nyka_shop
+
+# ── SERVER ───────────────────────────────
+PORT=5000
+JWT_SECRET=nyka_shop_2025_super_secret_key
+
+# ── BAKONG KHQR ──────────────────────────
+BAKONG_TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7ImlkIjoiOGEwZDkzMTc2ZTA2NDNhYiJ9LCJpYXQiOjE3NzI2MjUxNDUsImV4cCI6MTc4MDQwMTE0NX0.FLX6f1nhQfgqXnDaTuBvpHaXu-bZHgopGXH7b33740k
+BAKONG_ACCOUNT=kimchou_kren@bkrt
+BAKONG_MERCHANT=NyKa_Shop
+BAKONG_CITY=Kampong Chhnang
+
+# ── TELEGRAM ─────────────────────────────
+TG_TOKEN=8504509149:AAGLc8ZLaV9ZI1CWGx1V-PRQjMNY88ubm2g
+TG_CHAT_ID=8061490786
+TG_CONTACT=https://t.me/krenkimchou

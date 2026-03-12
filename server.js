@@ -15,7 +15,7 @@ const app = express();
 
 // ─── CONFIG ──────────────────────────────────────────────────
 const BAKONG = {
-  token   : process.env.BAKONG_TOKEN || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7ImlkIjoiOGEwZDkzMTc2ZTA2NDNhYiJ9LCJpYXQiOjE3NzI2MjUxNDUsImV4cCI6MTc4MDQwMTE0NX0.FLX6f1nhQfgqXnDaTuBvpHaXu-bZHgopGXH7b33740k",
+  token   : process.env.BAKONG_TOKEN || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7ImlkIjoiOGEwZDkzMTc2ZTA2NDNhYiJ9LCJpYXQiOjE3NzMyOTMwNDcsImV4cCI6MTc4MTA2OTA0N30.MCEX5uUVx3bxOWEpi_OQi1AnRG3neQktcnWSYpqTGBE",
   account : process.env.BAKONG_ACCOUNT || "kimchou_kren@bkrt",
   merchant: process.env.BAKONG_MERCHANT || "NyKa_Shop",
   city    : process.env.BAKONG_CITY || "Kampong Chhnang",
@@ -319,8 +319,39 @@ td{padding:10px 0;border-bottom:1px solid #fce7ef;font-size:.82rem}
 </div></body></html>`;
 }
 
-// ─── IN-MEMORY STORE (payment sessions) ───────────────────────
-const store = {};
+// ─── DB-BACKED STORE (serverless-safe, replaces in-memory store) ──────────────
+// Vercel Serverless Functions reset memory on every request.
+// All payment sessions must be persisted to MySQL instead.
+const store = {}; // kept as local cache only; source-of-truth is DB
+
+async function storeGet(bill) {
+  if (store[bill]) return store[bill]; // cache hit
+  if (!db) return null;
+  try {
+    const [rows] = await db.execute(
+      `SELECT o.id as dbId, o.user_id as userId, o.user_name as userName,
+              o.user_email as userEmail, o.total_amount as amount,
+              o.currency, o.status, o.khqr_string as khqr,
+              GROUP_CONCAT(CONCAT_WS('||',oi.product_icon,oi.product_name,oi.price,oi.quantity)
+                ORDER BY oi.id SEPARATOR ';;') AS items_raw
+       FROM orders o
+       LEFT JOIN order_items oi ON o.id=oi.order_id
+       WHERE o.bill_number=?
+       GROUP BY o.id LIMIT 1`, [bill]
+    );
+    if (!rows.length) return null;
+    const r = rows[0];
+    const items = (r.items_raw||'').split(';;').filter(Boolean).map(s => {
+      const [icon, name, price, qty] = s.split('||');
+      return { icon, name, price: +price, qty: +qty };
+    });
+    const inf = { dbId: r.dbId, userId: r.userId, userName: r.userName,
+      userEmail: r.userEmail, amount: +r.amount, currency: r.currency,
+      status: r.status, khqr: r.khqr, items };
+    store[bill] = inf; // populate cache
+    return inf;
+  } catch(e) { console.error('storeGet error:', e.message); return null; }
+}
 
 // ═══════════════════════════════════════════════════════════════
 //  ROUTES
@@ -556,7 +587,9 @@ app.post('/api/bakong/checkout', async (req, res) => {
 
 app.get('/api/bakong/status/:bill', async (req, res) => {
   const { bill } = req.params;
-  const inf = store[bill];
+
+  // Load from DB if not in local cache (fixes Vercel serverless memory reset)
+  const inf = await storeGet(bill);
   if (!inf) return res.json({ status: 'not_found' });
   if (inf.status === 'paid')
     return res.json({ status:'paid', billNumber:bill, amount:inf.amount, currency:inf.currency });
@@ -568,7 +601,26 @@ app.get('/api/bakong/status/:bill', async (req, res) => {
       headers:{ 'Authorization':`Bearer ${BAKONG.token}`, 'Content-Type':'application/json' },
       body: JSON.stringify({ md5 })
     });
-    const bk = await bkr.json();
+
+    // ── Bakong may return HTML on auth failure (expired token) ──
+    const rawText = await bkr.text();
+    let bk;
+    try {
+      bk = JSON.parse(rawText);
+    } catch {
+      console.error('Bakong returned non-JSON (token expired?):', rawText.substring(0,120));
+      // Log the issue but keep order as pending — don't break the app
+      if (db && inf.dbId) {
+        try {
+          await db.execute(
+            `INSERT INTO payment_logs (bill_number,order_id,action,bakong_code,bakong_message,md5_hash,raw_response) VALUES (?,?,'check_status',?,?,?,?)`,
+            [bill, inf.dbId, 401, 'Bakong token expired or invalid — please renew BAKONG_TOKEN', md5, rawText.substring(0,500)]
+          );
+        } catch{}
+      }
+      return res.json({ status:'pending', billNumber:bill, error:'bakong_token_expired' });
+    }
+
     console.log(`🔍 Bakong [${bill}]:`, bk.responseCode, bk.responseMessage);
 
     if (db && inf.dbId) {
@@ -583,6 +635,7 @@ app.get('/api/bakong/status/:bill', async (req, res) => {
     if (bk.responseCode === 0 && bk.data) {
       inf.status = 'paid';
       inf.paidAt = new Date().toISOString();
+      store[bill] = inf; // update local cache
       if (db && inf.dbId) {
         try { await db.execute(`UPDATE orders SET status='paid',paid_at=NOW() WHERE id=?`, [inf.dbId]); } catch{}
       }
@@ -603,7 +656,9 @@ app.get('/api/bakong/status/:bill', async (req, res) => {
 // Manual confirm (for testing)
 app.post('/api/bakong/confirm/:bill', async (req, res) => {
   const { bill } = req.params;
-  if (!store[bill]) return res.status(404).json({ success:false, message:'Not found' });
+  const inf = await storeGet(bill);
+  if (!inf) return res.status(404).json({ success:false, message:'Not found' });
+  store[bill] = inf; // ensure in cache
   store[bill].status = 'paid';
   store[bill].paidAt = new Date().toISOString();
   if (db && store[bill].dbId) {
@@ -619,9 +674,9 @@ app.post('/api/bakong/confirm/:bill', async (req, res) => {
 });
 
 // Invoice page
-app.get('/api/invoice/:bill', (req, res) => {
+app.get('/api/invoice/:bill', async (req, res) => {
   const { bill } = req.params;
-  const inf = store[bill];
+  const inf = await storeGet(bill);
   if (!inf || inf.status !== 'paid') return res.status(404).send(
     `<html><body style="background:#fff5f7;color:#e11d48;display:flex;height:100vh;align-items:center;justify-content:center;font-family:sans-serif;text-align:center"><div><h2>Invoice រកមិនឃើញ</h2><p style="color:#b89ca2;margin-top:8px">${bill}</p></div></body></html>`
   );

@@ -15,7 +15,7 @@ const app = express();
 
 // ─── CONFIG ──────────────────────────────────────────────────
 const BAKONG = {
-  token   : process.env.BAKONG_TOKEN || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7ImlkIjoiOGEwZDkzMTc2ZTA2NDNhYiJ9LCJpYXQiOjE3NzMyOTMwNDcsImV4cCI6MTc4MTA2OTA0N30.MCEX5uUVx3bxOWEpi_OQi1AnRG3neQktcnWSYpqTGBE",
+  token   : process.env.BAKONG_TOKEN || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7ImlkIjoiOGEwZDkzMTc2ZTA2NDNhYiJ9LCJpYXQiOjE3NzMyOTMwMjUsImV4cCI6MTc4MTA2OTAyNX0.f2cdAfOuGS_sMNU9SRwdFJlbxM4MK-W5XwuXVNjhakc",
   account : process.env.BAKONG_ACCOUNT || "kimchou_kren@bkrt",
   merchant: process.env.BAKONG_MERCHANT || "NyKa_Shop",
   city    : process.env.BAKONG_CITY || "Kampong Chhnang",
@@ -361,6 +361,21 @@ async function storeGet(bill) {
 app.get('/api/test', (_, res) =>
   res.json({ ok: true, db: !!db, bakong: BAKONG.account, time: new Date().toISOString() })
 );
+
+app.get('/api/test-token', async (_, res) => {
+  try {
+    const r = await fetch('https://api-bakong.nbc.gov.kh/v1/check_transaction_by_md5', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${BAKONG.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ md5: 'test' })
+    });
+    const text = await r.text();
+    res.json({
+      token_first20: BAKONG.token.substring(0, 20) + '...',
+      bakong_response: text.substring(0, 200)
+    });
+  } catch(e) { res.json({ error: e.message }); }
+});
 
 // ══════════════════════════════════════════
 //  PRODUCTS — PUBLIC

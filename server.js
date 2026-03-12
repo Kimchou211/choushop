@@ -52,7 +52,11 @@ async function initDB() {
       database         : process.env.DB_NAME || 'nyka_shop',
       charset          : 'utf8mb4',
       waitForConnections: true,
-      connectionLimit  : 10
+      connectionLimit  : 10,
+      // ថែមកូដ៣ជួរនេះ ដើម្បីឲ្យវាអាចភ្ជាប់ជាមួយ Railway បាន
+      ssl: {
+        rejectUnauthorized: false
+      }
     });
     // Test connection
     await db.execute('SELECT 1');
@@ -61,7 +65,7 @@ async function initDB() {
     await seedAdmin();
     console.log('✅ Database ready');
   } catch(e) {
-    console.error('❌ DB error:', e.message);
+    console.error('❌ DB error:', e.message); // កន្លែងនេះវានឹងប្រាប់ពី Error ពិតប្រាកដ
     console.log('⚠️  Server running without DB');
     db = null;
   }

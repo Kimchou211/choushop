@@ -78,7 +78,7 @@ async function createTables() {
     name       VARCHAR(120) NOT NULL,
     email      VARCHAR(160) UNIQUE NOT NULL,
     phone      VARCHAR(30)  DEFAULT '',
-    address    TEXT         DEFAULT '',
+    address    VARCHAR(255) DEFAULT '',     /* កែនៅត្រង់នេះ */
     password   VARCHAR(255) NOT NULL,
     role       ENUM('user','admin') DEFAULT 'user',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -106,7 +106,7 @@ async function createTables() {
     updated_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
   ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
 
-  // Orders table
+ // Orders table
   await db.execute(`CREATE TABLE IF NOT EXISTS orders (
     id             INT AUTO_INCREMENT PRIMARY KEY,
     order_number   VARCHAR(60) UNIQUE NOT NULL,
@@ -122,7 +122,7 @@ async function createTables() {
     bill_number    VARCHAR(60) DEFAULT '',
     khqr_string    TEXT,
     telegram_sent  TINYINT(1) DEFAULT 0,
-    notes          TEXT DEFAULT '',
+    notes          VARCHAR(255) DEFAULT '',    /* កែនៅត្រង់នេះដែរ */
     paid_at        TIMESTAMP NULL,
     created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
